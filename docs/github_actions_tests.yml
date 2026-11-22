@@ -1,0 +1,12 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e . pytest matplotlib
+      - run: pytest -q
+      - run: stattrap audit-items --per-family 100 --perms 1 --out /tmp/audit.csv
