@@ -249,3 +249,32 @@ def test_direct_token_cap(tmp_path):
     f = tmp_path / "r.csv"; run_eval(its, ["m"], ["direct", "cot"], MockBackend("random"), f, max_new_tokens=1024)
     d = pd.read_csv(f, keep_default_na=False)
     assert (d[d["style"] == "direct"].max_new_tokens == 32).all() and (d[d["style"] == "cot"].max_new_tokens == 1024).all()
+
+
+def test_hf_direct_logit_mode_stub():
+    torch = pytest.importorskip("torch")
+    from stattrap.backends import HFBackend
+
+    class Enc(dict):
+        def to(self, d): return self
+
+    class Tok:
+        pad_token_id, eos_token_id, pad_token, eos_token, padding_side = None, 0, None, "<e>", "right"
+        def apply_chat_template(self, msgs, add_generation_prompt=True, tokenize=True): return msgs[0]["content"]
+        def __call__(self, texts, return_tensors=None, padding=True, add_special_tokens=False):
+            ids = torch.tensor([[5, 6, 7]] * len(texts)); return Enc(input_ids=ids, attention_mask=torch.ones_like(ids))
+        def encode(self, t, add_special_tokens=False): return [{"A": 10, "B": 11, "C": 12, "D": 13}[t.strip()] + (20 if t.startswith(" ") else 0)]
+
+    class Out:
+        def __init__(self, l): self.logits = l
+
+    class Model:
+        device = "cpu"
+        def __call__(self, input_ids, attention_mask, position_ids):
+            lg = torch.zeros(input_ids.shape[0], input_ids.shape[1], 64); lg[:, -1, 12] = 5.0   # letter C
+            return Out(lg)
+
+    be = HFBackend(direct_mode="logit"); be.cur, be.tok, be.model = "x", Tok(), Model()
+    its = make_items(1, 0, 1)[:3]
+    assert [o[0] for o in be.generate_batch("x", its, "direct", 32)] == ["C", "C", "C"]
+    assert be.generate("x", its[0], "direct", 32)[0] == "C"

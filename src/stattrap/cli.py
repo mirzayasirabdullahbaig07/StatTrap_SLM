@@ -33,6 +33,7 @@ def main(argv=None):
     r.add_argument("--models", nargs="+", required=True); r.add_argument("--styles", nargs="+", default=["direct", "cot"])
     r.add_argument("--temperatures", nargs="+", type=float, default=[0.0]); r.add_argument("--decode-seeds", nargs="+", type=int, default=[0])
     r.add_argument("--max-new-tokens", type=int, default=512); r.add_argument("--load-in-4bit", action="store_true")
+    r.add_argument("--direct-mode", choices=["logit", "generate"], default="logit", help="HF only. logit = read letter probabilities for DIRECT prompts (recommended); generate = free text + parsing")
     r.add_argument("--batch-size", type=int, default=1, help="HF backend only: questions generated at once (try 16; 8 for 7B)")
     r.add_argument("--limit", type=int, help="first N items only (smoke test)"); r.add_argument("--out", default="results/run.csv")
 
@@ -90,12 +91,12 @@ def main(argv=None):
             for it in items:
                 by_fam.setdefault(it.family, []).append(it)
             items = [x for x in chain.from_iterable(zip_longest(*by_fam.values())) if x is not None][: args.limit]
-        be = {"ollama": OllamaBackend, "hf": lambda: HFBackend(args.load_in_4bit), "mock": lambda: MockBackend("random")}[args.backend]()
+        be = {"ollama": OllamaBackend, "hf": lambda: HFBackend(args.load_in_4bit, args.direct_mode), "mock": lambda: MockBackend("random")}[args.backend]()
         from .tasks import PROMPT_VERSION
         extra = {"prompt_version": PROMPT_VERSION, **({"ollama_version": be.version()} if args.backend == "ollama" else {})}
         ih = items_hash(items)
         write_manifest(args.out, build_manifest({**vars(args), "families": args.families, "limit": args.limit,
-                                                 "temperatures": args.temperatures, "decode_seeds": args.decode_seeds, "batch_size": args.batch_size},
+                                                 "temperatures": args.temperatures, "decode_seeds": args.decode_seeds, "batch_size": args.batch_size, "direct_mode": args.direct_mode if args.backend == "hf" else "generate"},
                                                 ih, len(items), extra))
         n = run_eval(items, args.models, args.styles, be, args.out, args.max_new_tokens, args.temperatures, args.decode_seeds, batch_size=args.batch_size)
         print(f"wrote {n} new rows to {args.out} (item-set hash {ih})")

@@ -47,7 +47,7 @@ def build_manifest(args: dict, items_hash: str, n_items: int, extra: dict | None
     return {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "item_params": {k: args[k] for k in
             ("per_family", "perms", "seed", "framing", "families") if k in args},
             "items_hash": items_hash, "n_items": n_items,
-            "run_params": {k: args[k] for k in ("backend", "models", "styles", "max_new_tokens", "batch_size", "temperatures",
+            "run_params": {k: args[k] for k in ("backend", "models", "styles", "max_new_tokens", "batch_size", "direct_mode", "temperatures",
                                                  "decode_seeds") if k in args},
             "python": platform.python_version(), "platform": platform.platform(), "cpu_count": __import__("os").cpu_count(),
             "ram_gb": ram, "gpu": _gpu(), "git_commit": _git(),

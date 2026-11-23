@@ -57,9 +57,12 @@ class OllamaBackend:
 class HFBackend:
     """Greedy (temperature 0) or sampled decoding with transformers; one model resident at a time."""
 
-    def __init__(self, load_in_4bit: bool = False):
+    def __init__(self, load_in_4bit: bool = False, direct_mode: str = "logit"):
+        """direct_mode 'logit': DIRECT answers are read from next-token letter probabilities (one forward pass, no free
+        text, no format failures - the standard multiple-choice protocol). 'generate': free generation + parsing."""
         self.cur = self.tok = self.model = None
         self.load_in_4bit = load_in_4bit
+        self.direct_mode = direct_mode
 
     def _load(self, name):
         if self.cur == name:
@@ -77,7 +80,35 @@ class HFBackend:
         self.model = AutoModelForCausalLM.from_pretrained(name, **kw)
         self.cur = name
 
+    def _direct_letters_batch(self, items):
+        """Argmax over A-D of the first-token logits (letters with/without leading space pooled by logsumexp)."""
+        import torch
+        tok = self.tok
+        tok.padding_side = "left"
+        if tok.pad_token_id is None:
+            tok.pad_token = tok.eos_token
+        texts = [tok.apply_chat_template([{"role": "user", "content": it.prompt("direct")}],
+                                         add_generation_prompt=True, tokenize=False) for it in items]
+        enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(self.model.device)
+        am = enc["attention_mask"]
+        pos = (am.cumsum(-1) - 1).clamp(min=0)
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            logits = self.model(input_ids=enc["input_ids"], attention_mask=am, position_ids=pos).logits[:, -1, :].float()
+        per = (time.perf_counter() - t0) / len(items)
+        cand = []
+        for L in "ABCD":
+            ids = {tok.encode(L, add_special_tokens=False)[0], tok.encode(" " + L, add_special_tokens=False)[-1]}
+            cand.append(sorted(ids))
+        scores = torch.stack([torch.logsumexp(logits[:, ids], dim=-1) for ids in cand], dim=-1)   # (batch, 4)
+        picks = scores.argmax(-1).tolist()
+        n_real = am.sum(1).tolist()
+        return [("ABCD"[k], per, int(n_real[i]), 1) for i, k in enumerate(picks)]
+
     def generate(self, model, item, style="direct", max_new_tokens=256, temperature=0.0, seed=0):
+        if style == "direct" and self.direct_mode == "logit":
+            self._load(model)
+            return self._direct_letters_batch([item])[0]
         import torch
         self._load(model)
         # tokenize=False + explicit tokenisation: apply_chat_template(return_tensors=...) returns a tensor in old
@@ -102,6 +133,8 @@ class HFBackend:
         batch_size=1; keep --batch-size identical across all models of one study and report it."""
         import torch
         self._load(model)
+        if style == "direct" and self.direct_mode == "logit":
+            return self._direct_letters_batch(items)
         tok = self.tok
         tok.padding_side = "left"
         if tok.pad_token_id is None:
