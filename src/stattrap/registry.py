@@ -17,5 +17,7 @@ REGISTRY = {
     "Qwen/Qwen2.5-7B-Instruct": dict(params_b=7.0, family="qwen2.5", quant="HF dtype as loaded"),
     "meta-llama/Llama-3.2-1B-Instruct": dict(params_b=1.0, family="llama3.2", quant="HF dtype as loaded"),
     "meta-llama/Llama-3.2-3B-Instruct": dict(params_b=3.0, family="llama3.2", quant="HF dtype as loaded"),
+    "HuggingFaceTB/SmolLM2-1.7B-Instruct": dict(params_b=1.7, family="smollm2", quant="HF dtype as loaded"),
+    "microsoft/Phi-3.5-mini-instruct": dict(params_b=3.8, family="phi3.5", quant="HF dtype as loaded"),
     "google/gemma-2-2b-it": dict(params_b=2.0, family="gemma2", quant="HF dtype as loaded"),
 }

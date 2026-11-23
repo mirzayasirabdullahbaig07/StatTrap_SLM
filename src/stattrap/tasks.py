@@ -38,7 +38,7 @@ class Item:
     def prompt(self, style: str = "direct") -> str:
         opts = "\n".join(f"{l}. {t}" for l, t in self.options.items())
         tail = ("Answer with a single letter." if style == "direct" else
-                "Think step by step briefly, then finish with a final line 'Answer: <letter>'.")
+                "Think step by step in at most 100 words, then finish with a final line 'Answer: <letter>'.")
         return f"{self.question}\n\n{opts}\n\n{tail}"
 
 
@@ -331,6 +331,9 @@ def make_items(n_per_family: int = 30, seed: int = 0, n_perms: int = 1, framing:
             for p in range(n_perms):
                 items.append(_arrange(base, fam, FRAMINGS[framing](q), c, t, others, p, seed, framing))
     return items
+
+
+PROMPT_VERSION = 2  # v1: 'Think step by step briefly' (smoke test: 100% of multiple_testing CoT truncated at 384 tokens); v2: 100-word cap
 
 
 def items_hash(items: list[Item]) -> str:

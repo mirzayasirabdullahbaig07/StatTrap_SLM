@@ -32,7 +32,7 @@ def main(argv=None):
     r.add_argument("--backend", choices=["ollama", "hf", "mock"], default="ollama")
     r.add_argument("--models", nargs="+", required=True); r.add_argument("--styles", nargs="+", default=["direct", "cot"])
     r.add_argument("--temperatures", nargs="+", type=float, default=[0.0]); r.add_argument("--decode-seeds", nargs="+", type=int, default=[0])
-    r.add_argument("--max-new-tokens", type=int, default=384); r.add_argument("--load-in-4bit", action="store_true")
+    r.add_argument("--max-new-tokens", type=int, default=512); r.add_argument("--load-in-4bit", action="store_true")
     r.add_argument("--limit", type=int, help="first N items only (smoke test)"); r.add_argument("--out", default="results/run.csv")
 
     a = sub.add_parser("analyze", help="tables + figures from a results CSV (item set read from its manifest)")
@@ -80,10 +80,15 @@ def main(argv=None):
         from .runner import run_eval
         from .tasks import items_hash
         items = _build_items(args)
-        if args.limit:
-            items = items[: args.limit]
+        if args.limit:   # round-robin across families so a smoke test covers every family
+            from itertools import chain, zip_longest
+            by_fam = {}
+            for it in items:
+                by_fam.setdefault(it.family, []).append(it)
+            items = [x for x in chain.from_iterable(zip_longest(*by_fam.values())) if x is not None][: args.limit]
         be = {"ollama": OllamaBackend, "hf": lambda: HFBackend(args.load_in_4bit), "mock": lambda: MockBackend("random")}[args.backend]()
-        extra = {"ollama_version": be.version()} if args.backend == "ollama" else {}
+        from .tasks import PROMPT_VERSION
+        extra = {"prompt_version": PROMPT_VERSION, **({"ollama_version": be.version()} if args.backend == "ollama" else {})}
         ih = items_hash(items)
         write_manifest(args.out, build_manifest({**vars(args), "families": args.families, "limit": args.limit,
                                                  "temperatures": args.temperatures, "decode_seeds": args.decode_seeds},
