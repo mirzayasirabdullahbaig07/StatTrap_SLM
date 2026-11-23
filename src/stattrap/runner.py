@@ -12,7 +12,7 @@ FIELDS = ["item_id", "base_id", "family", "perm", "framing", "model", "style", "
 
 
 def run_eval(items, models, styles, backend, out_csv, max_new_tokens=256, temperatures=(0.0,), decode_seeds=(0,),
-             progress_every=50, batch_size=1) -> int:
+             progress_every=50, batch_size=1, direct_max_new_tokens=32) -> int:
     out = Path(out_csv); out.parent.mkdir(parents=True, exist_ok=True)
     key = lambda r: (r["item_id"], r["model"], r["style"], str(float(r["temperature"])), str(int(r["decode_seed"])))
     done = set()
@@ -28,22 +28,23 @@ def run_eval(items, models, styles, backend, out_csv, max_new_tokens=256, temper
             for style in styles:
                 for temp in temperatures:
                     for ds in (decode_seeds if temp > 0 else (decode_seeds[0],)):   # greedy needs one seed only
+                        mnt = min(max_new_tokens, direct_max_new_tokens) if style == "direct" else max_new_tokens
                         todo = [it for it in items if (it.id, model, style, str(float(temp)), str(int(ds))) not in done]
                         bs = batch_size if hasattr(backend, "generate_batch") else 1
                         for k in range(0, len(todo), bs):
                             chunk = todo[k:k + bs]
                             if bs > 1:
-                                outs = backend.generate_batch(model, chunk, style, max_new_tokens, temp, ds)
+                                outs = backend.generate_batch(model, chunk, style, mnt, temp, ds)
                             else:
-                                outs = [backend.generate(model, it, style, max_new_tokens, temp, ds) for it in chunk]
+                                outs = [backend.generate(model, it, style, mnt, temp, ds) for it in chunk]
                             for it, (text, lat, pt, ct) in zip(chunk, outs):
                                 ch = parse_choice(text, style, it)
                                 w.writerow(dict(item_id=it.id, base_id=it.base_id, family=it.family, perm=it.perm,
                                                 framing=it.framing, model=model, style=style, temperature=temp,
                                                 decode_seed=ds, chosen=ch or "", correct=int(ch == it.answer),
                                                 trapped=int(ch == it.trap), answer=it.answer, trap=it.trap,
-                                                max_new_tokens=max_new_tokens, latency_s=round(lat, 4), prompt_tokens=pt,
-                                                completion_tokens=ct, truncated=int(ct >= max_new_tokens - 1),
+                                                max_new_tokens=mnt, latency_s=round(lat, 4), prompt_tokens=pt,
+                                                completion_tokens=ct, truncated=int(ct >= mnt - 1),
                                                 response=text.replace("\n", " ")[:600]))
                                 new += 1
                             f.flush()

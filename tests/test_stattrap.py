@@ -242,3 +242,10 @@ def test_merge_parallel_notebooks(tmp_path):
     main(["run", "--backend", "mock", "--models", "x", "--per-family", "5", "--perms", "2", "--out", str(c)])
     with pytest.raises(ValueError):
         main(["merge", "--csv", str(a), str(c), "--out", str(tmp_path / "bad.csv")])
+
+
+def test_direct_token_cap(tmp_path):
+    its = make_items(2, 0, 1)
+    f = tmp_path / "r.csv"; run_eval(its, ["m"], ["direct", "cot"], MockBackend("random"), f, max_new_tokens=1024)
+    d = pd.read_csv(f, keep_default_na=False)
+    assert (d[d["style"] == "direct"].max_new_tokens == 32).all() and (d[d["style"] == "cot"].max_new_tokens == 1024).all()
