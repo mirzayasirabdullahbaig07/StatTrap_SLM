@@ -109,6 +109,8 @@ def main(argv=None):
             if not m["run_params"].get("limit") and "limit" not in str(m):
                 raise SystemExit("Item set rebuilt from manifest does not match its hash: generator code changed since the run.")
         df = pd.read_csv(args.csv, keep_default_na=False)
+        if df.empty:
+            raise SystemExit(f"{args.csv} has no result rows (the run failed before writing any). Fix the run first.")
         out = Path(args.csv).with_suffix("")
         if args.cmd == "error-sheet":
             from .sheets import error_sheet

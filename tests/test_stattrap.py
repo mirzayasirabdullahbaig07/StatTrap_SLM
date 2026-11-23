@@ -164,3 +164,31 @@ def test_cli_end_to_end(tmp_path):
     main(["analyze", "--csv", str(out)])
     assert (tmp_path / "run_figures" / "cot_gain.png").exists()
     assert (tmp_path / "run_summary.csv").exists()
+
+
+def test_hf_backend_batchencoding_template():
+    """Regression: new transformers returns a BatchEncoding from apply_chat_template; we must not depend on that."""
+    torch = pytest.importorskip("torch")
+    from stattrap.backends import HFBackend
+
+    class Enc(dict):
+        def to(self, d): return self
+
+    class Tok:
+        pad_token_id, eos_token_id = None, 0
+        def apply_chat_template(self, msgs, add_generation_prompt=True, tokenize=True, return_tensors=None):
+            assert tokenize is False
+            return "<chat>" + msgs[0]["content"]
+        def __call__(self, text, return_tensors=None, add_special_tokens=True):
+            ids = torch.tensor([[1, 2, 3, 4]]); return Enc(input_ids=ids, attention_mask=torch.ones_like(ids))
+        def decode(self, ids, skip_special_tokens=True): return "B"
+
+    class Model:
+        device = "cpu"
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, **kw):
+            return torch.cat([input_ids, torch.tensor([[9]])], 1)
+
+    be = HFBackend(); be.cur, be.tok, be.model = "x", Tok(), Model()
+    it = make_items(1, 0, 1)[0]
+    text, lat, pt, ct = be.generate("x", it, "direct", 8)
+    assert text == "B" and pt == 4 and ct == 1

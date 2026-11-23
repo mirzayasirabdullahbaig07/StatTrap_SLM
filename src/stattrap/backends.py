@@ -76,15 +76,21 @@ class HFBackend:
     def generate(self, model, item, style="direct", max_new_tokens=256, temperature=0.0, seed=0):
         import torch
         self._load(model)
-        ids = self.tok.apply_chat_template([{"role": "user", "content": item.prompt(style)}],
-                                           add_generation_prompt=True, return_tensors="pt").to(self.model.device)
+        # tokenize=False + explicit tokenisation: apply_chat_template(return_tensors=...) returns a tensor in old
+        # transformers but a BatchEncoding dict in new ones (this caused the first Kaggle failure).
+        text = self.tok.apply_chat_template([{"role": "user", "content": item.prompt(style)}],
+                                            add_generation_prompt=True, tokenize=False)
+        enc = self.tok(text, return_tensors="pt", add_special_tokens=False).to(self.model.device)
+        n_in = int(enc["input_ids"].shape[1])
         torch.manual_seed(seed)
         t0 = time.perf_counter()
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else self.tok.eos_token_id
         with torch.no_grad():
             kw = dict(do_sample=True, temperature=temperature) if temperature > 0 else dict(do_sample=False)
-            out = self.model.generate(ids, max_new_tokens=max_new_tokens, **kw)
-        new = out[0, ids.shape[1]:]
-        return self.tok.decode(new, skip_special_tokens=True), time.perf_counter() - t0, int(ids.shape[1]), int(len(new))
+            out = self.model.generate(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"],
+                                      max_new_tokens=max_new_tokens, pad_token_id=pad, **kw)
+        new = out[0, n_in:]
+        return self.tok.decode(new, skip_special_tokens=True), time.perf_counter() - t0, n_in, int(len(new))
 
 
 _ANS = re.compile(r"(?:final\s+)?answer(?:\s+is)?\s*[:\-]?\s*\**\s*\(?\s*([A-D])\b", re.I)
