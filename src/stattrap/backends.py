@@ -30,6 +30,10 @@ class MockBackend:
         return text, 0.01, 10, 3
 
 
+    def generate_batch(self, model, items, style="direct", max_new_tokens=256, temperature=0.0, seed=0):
+        return [self.generate(model, it, style, max_new_tokens, temperature, seed) for it in items]
+
+
 class OllamaBackend:
     def __init__(self, base_url="http://localhost:11434", timeout=600):
         import requests
@@ -91,6 +95,38 @@ class HFBackend:
                                       max_new_tokens=max_new_tokens, pad_token_id=pad, **kw)
         new = out[0, n_in:]
         return self.tok.decode(new, skip_special_tokens=True), time.perf_counter() - t0, n_in, int(len(new))
+
+    def generate_batch(self, model, items, style="direct", max_new_tokens=256, temperature=0.0, seed=0):
+        """Generate for many items at once (left-padded). Much faster on GPU than one-by-one.
+        NOTE: padding changes floating-point numerics slightly, so greedy outputs can differ in rare cases from
+        batch_size=1; keep --batch-size identical across all models of one study and report it."""
+        import torch
+        self._load(model)
+        tok = self.tok
+        tok.padding_side = "left"
+        if tok.pad_token_id is None:
+            tok.pad_token = tok.eos_token
+        texts = [tok.apply_chat_template([{"role": "user", "content": it.prompt(style)}],
+                                         add_generation_prompt=True, tokenize=False) for it in items]
+        enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(self.model.device)
+        n_in = int(enc["input_ids"].shape[1])
+        n_real = enc["attention_mask"].sum(1).tolist()
+        torch.manual_seed(seed)
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            kw = dict(do_sample=True, temperature=temperature) if temperature > 0 else dict(do_sample=False)
+            out = self.model.generate(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"],
+                                      max_new_tokens=max_new_tokens, pad_token_id=tok.pad_token_id, **kw)
+        per = (time.perf_counter() - t0) / len(items)
+        eos = {tok.eos_token_id} if isinstance(tok.eos_token_id, int) else set(tok.eos_token_id or [])
+        res = []
+        for i in range(len(items)):
+            ids = out[i, n_in:].tolist(); cut = len(ids)
+            for j, t in enumerate(ids):
+                if t in eos:
+                    cut = j + 1; break
+            res.append((tok.decode(ids[:cut], skip_special_tokens=True), per, int(n_real[i]), cut))
+        return res
 
 
 _ANS = re.compile(r"(?:final\s+)?answer(?:\s+is)?\s*[:\-]?\s*\**\s*\(?\s*([A-D])\b", re.I)

@@ -33,6 +33,7 @@ def main(argv=None):
     r.add_argument("--models", nargs="+", required=True); r.add_argument("--styles", nargs="+", default=["direct", "cot"])
     r.add_argument("--temperatures", nargs="+", type=float, default=[0.0]); r.add_argument("--decode-seeds", nargs="+", type=int, default=[0])
     r.add_argument("--max-new-tokens", type=int, default=512); r.add_argument("--load-in-4bit", action="store_true")
+    r.add_argument("--batch-size", type=int, default=1, help="HF backend only: questions generated at once (try 16; 8 for 7B)")
     r.add_argument("--limit", type=int, help="first N items only (smoke test)"); r.add_argument("--out", default="results/run.csv")
 
     a = sub.add_parser("analyze", help="tables + figures from a results CSV (item set read from its manifest)")
@@ -40,6 +41,9 @@ def main(argv=None):
 
     e = sub.add_parser("error-sheet", help="sample wrong CoT answers for manual error coding")
     e.add_argument("--csv", required=True); e.add_argument("--n", type=int, default=60)
+
+    g = sub.add_parser("merge", help="combine result CSVs from separate runs/notebooks (same item set required)")
+    g.add_argument("--csv", nargs="+", required=True); g.add_argument("--out", required=True)
 
     c = sub.add_parser("compare", help="paired comparison of two runs on the same items (e.g. framing 0 vs 2)")
     c.add_argument("--a", required=True); c.add_argument("--b", required=True)
@@ -91,9 +95,9 @@ def main(argv=None):
         extra = {"prompt_version": PROMPT_VERSION, **({"ollama_version": be.version()} if args.backend == "ollama" else {})}
         ih = items_hash(items)
         write_manifest(args.out, build_manifest({**vars(args), "families": args.families, "limit": args.limit,
-                                                 "temperatures": args.temperatures, "decode_seeds": args.decode_seeds},
+                                                 "temperatures": args.temperatures, "decode_seeds": args.decode_seeds, "batch_size": args.batch_size},
                                                 ih, len(items), extra))
-        n = run_eval(items, args.models, args.styles, be, args.out, args.max_new_tokens, args.temperatures, args.decode_seeds)
+        n = run_eval(items, args.models, args.styles, be, args.out, args.max_new_tokens, args.temperatures, args.decode_seeds, batch_size=args.batch_size)
         print(f"wrote {n} new rows to {args.out} (item-set hash {ih})")
 
     elif args.cmd in ("analyze", "error-sheet"):
@@ -132,6 +136,10 @@ def main(argv=None):
             rp.fig_position_bias(tables["position_bias"], figdir / f"position_bias_{style}.png", style)
         rp.fig_cot_gain(cot, figdir / "cot_gain.png"); rp.fig_scaling(tables["scaling"], figdir / "scaling.png")
         print(f"\nTables: {out}_*.csv   Figures: {figdir}/")
+
+    elif args.cmd == "merge":
+        from .manifest import merge_csvs
+        print(f"merged {len(args.csv)} files -> {args.out}: {merge_csvs(args.csv, args.out)} rows")
 
     elif args.cmd == "compare":
         from . import analysis as an

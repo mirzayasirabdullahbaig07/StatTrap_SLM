@@ -192,3 +192,53 @@ def test_hf_backend_batchencoding_template():
     it = make_items(1, 0, 1)[0]
     text, lat, pt, ct = be.generate("x", it, "direct", 8)
     assert text == "B" and pt == 4 and ct == 1
+
+
+def test_batched_runner_matches_unbatched(tmp_path):
+    its = make_items(4, 0, 1)
+    a, b = tmp_path / "a.csv", tmp_path / "b.csv"
+    run_eval(its, ["m"], ["direct", "cot"], MockBackend("random", 3), a, batch_size=1)
+    run_eval(its, ["m"], ["direct", "cot"], MockBackend("random", 3), b, batch_size=7)
+    da, db = pd.read_csv(a, keep_default_na=False), pd.read_csv(b, keep_default_na=False)
+    assert len(da) == len(db) == len(its) * 2
+    assert (da.chosen.values == db.chosen.values).all()
+
+
+def test_hf_generate_batch_stub():
+    torch = pytest.importorskip("torch")
+    from stattrap.backends import HFBackend
+
+    class Enc(dict):
+        def to(self, d): return self
+
+    class Tok:
+        pad_token_id, eos_token_id, pad_token, eos_token, padding_side = None, 0, None, "<e>", "right"
+        def apply_chat_template(self, msgs, add_generation_prompt=True, tokenize=True): return msgs[0]["content"]
+        def __call__(self, texts, return_tensors=None, padding=True, add_special_tokens=False):
+            ids = torch.tensor([[1, 2, 3]] * len(texts)); return Enc(input_ids=ids, attention_mask=torch.ones_like(ids))
+        def decode(self, ids, skip_special_tokens=True): return "B"
+
+    class Model:
+        device = "cpu"
+        def generate(self, input_ids, attention_mask, max_new_tokens, pad_token_id, **kw):
+            n = input_ids.shape[0]; return torch.cat([input_ids, torch.tensor([[7, 0, 0]] * n)], 1)
+
+    be = HFBackend(); be.cur, be.tok, be.model = "x", Tok(), Model()
+    its = make_items(1, 0, 1)[:3]
+    out = be.generate_batch("x", its, "direct", 8)
+    assert len(out) == 3 and all(o[0] == "B" and o[3] == 2 for o in out)   # stops after first EOS (7, 0)
+
+
+def test_merge_parallel_notebooks(tmp_path):
+    from stattrap.cli import main
+    a, b, m = tmp_path / "a.csv", tmp_path / "b.csv", tmp_path / "m.csv"
+    main(["run", "--backend", "mock", "--models", "qwen2.5:1.5b", "--per-family", "4", "--perms", "2", "--out", str(a)])
+    main(["run", "--backend", "mock", "--models", "qwen2.5:7b", "--per-family", "4", "--perms", "2", "--out", str(b)])
+    main(["merge", "--csv", str(a), str(b), "--out", str(m)])
+    df = pd.read_csv(m, keep_default_na=False)
+    assert set(df.model) == {"qwen2.5:1.5b", "qwen2.5:7b"}
+    main(["analyze", "--csv", str(m)])
+    c = tmp_path / "c.csv"
+    main(["run", "--backend", "mock", "--models", "x", "--per-family", "5", "--perms", "2", "--out", str(c)])
+    with pytest.raises(ValueError):
+        main(["merge", "--csv", str(a), str(c), "--out", str(tmp_path / "bad.csv")])

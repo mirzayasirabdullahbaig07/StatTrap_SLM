@@ -47,7 +47,7 @@ def build_manifest(args: dict, items_hash: str, n_items: int, extra: dict | None
     return {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "item_params": {k: args[k] for k in
             ("per_family", "perms", "seed", "framing", "families") if k in args},
             "items_hash": items_hash, "n_items": n_items,
-            "run_params": {k: args[k] for k in ("backend", "models", "styles", "max_new_tokens", "temperatures",
+            "run_params": {k: args[k] for k in ("backend", "models", "styles", "max_new_tokens", "batch_size", "temperatures",
                                                  "decode_seeds") if k in args},
             "python": platform.python_version(), "platform": platform.platform(), "cpu_count": __import__("os").cpu_count(),
             "ram_gb": ram, "gpu": _gpu(), "git_commit": _git(),
@@ -74,3 +74,23 @@ def write_manifest(csv_path, manifest: dict):
 def read_manifest(csv_path) -> dict | None:
     mp = manifest_path(csv_path)
     return json.loads(mp.read_text()) if mp.exists() else None
+
+
+def merge_csvs(csv_paths, out_csv):
+    """Combine result files made by separate runs (e.g. one Kaggle notebook per model).
+    Refuses if they were generated from different item sets. Returns number of rows."""
+    import pandas as pd
+    mans = [read_manifest(p) for p in csv_paths]
+    if any(m is None for m in mans):
+        raise ValueError("every CSV needs its .manifest.json next to it")
+    base = mans[0]
+    for p, m in zip(csv_paths, mans):
+        if m["items_hash"] != base["items_hash"] or m["item_params"] != base["item_params"]:
+            raise ValueError(f"{p} used a different item set (hash {m['items_hash']} vs {base['items_hash']}); cannot merge")
+    df = pd.concat([pd.read_csv(p, keep_default_na=False) for p in csv_paths], ignore_index=True)
+    df = df.drop_duplicates(["item_id", "model", "style", "temperature", "decode_seed"], keep="first")
+    out = Path(out_csv); out.parent.mkdir(parents=True, exist_ok=True); df.to_csv(out, index=False)
+    merged = dict(base); merged["merged_from"] = [str(p) for p in csv_paths]
+    merged["run_params"] = {**base["run_params"], "models": sorted(df.model.unique().tolist())}
+    manifest_path(out).write_text(json.dumps(merged, indent=2))
+    return len(df)
